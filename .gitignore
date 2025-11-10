@@ -1,1 +1,7 @@
 .env
+data/*
+!data/.gitkeep
+!data/README.md
+logs/*
+!logs/.gitkeep
+!logs/README.md

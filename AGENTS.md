@@ -5,14 +5,14 @@ You are an automation agent responsible for synchronizing unbilled expenses from
 ## High-level workflow
 1. **Load configuration**
    - Read API credentials and identifiers from environment variables:
-     - `ZOHO_BOOKS_ORG_ID`, `ZOHO_BOOKS_ACCESS_TOKEN` (or refresh-token workflow) for Zoho.
+     - `ZOHO_ORGANIZATION_ID`, `ZOHO_ACCESS_TOKEN` (or refresh-token workflow) for Zoho.
      - `HOSTAWAY_ACCESS_TOKEN` for Hostaway.
    - Set `OWNER_STATEMENT_CACHE` (path) for storing fetched owner statements if provided; otherwise keep everything in memory.
 
 2. **Fetch Zoho unbilled expenses**
-   - Call the Zoho Books endpoint `GET /expenses` (or the specific unbilled endpoint) using the org ID and access token.
+   - Call the Zoho Books endpoint `GET /expenses` (or the specific unbilled endpoint) using the org ID and access token (`https://www.zohoapis.com/books/v3/expenses`).
    - Apply filters to retrieve only `status == "unbilled"`.
-   - Save the raw Zoho response into `hostaway_unbilled_expenses_<YYYY-MM-DD>.json` in the working directory.
+   - Save the raw Zoho response into `data/zoho/unbilled_expenses_<YYYY-MM-DD>.json`.
 
 3. **Extract expenses for processing**
    - Parse the saved JSON and iterate over `expenses`.
@@ -22,6 +22,7 @@ You are an automation agent responsible for synchronizing unbilled expenses from
 4. **Match Hostaway owner statements**
    - Query Hostaway `GET /v1/ownerStatements` (or cache) to obtain all statements for every customer.
    - For every candidate statement ID, fetch the detailed object via `GET /v1/ownerStatement/{statement_id}` to confirm `ownerStatementId`, `ownerUserId`, and statement metadata before assigning expenses.
+   - Store both the list response and each detail payload under `data/hostaway/` (e.g., `owner_statements_<YYYY-MM-DD>.json`, `owner_statement_<id>.json`) so subsequent runs can reuse cached data when nothing has changed.
    - Match logic:
      - Group owner statements by customer (parse the `"Last, First - YYYY Month"` naming convention or use owner metadata returned by the detail endpoint).
      - For each customer, identify the **latest** available statement month and treat that as the target statement for *all* unbilled expenses for that customer, regardless of the expense date (e.g., if John Smith has statements through October 2025, route July–October unbilled expenses to the October 2025 statement).
@@ -52,10 +53,12 @@ You are an automation agent responsible for synchronizing unbilled expenses from
 
 ## Output expectations
 - Always persist the Zoho JSON snapshot before processing.
+- Record every POST/PUT/PATCH/DELETE request to Hostaway (payload, endpoint, timestamp, response) inside `logs/` using a unique filename per run.
 - At the end of the run, print:
   1. Path of the saved Zoho JSON file.
   2. Table summarizing expense ID, customer, statement name, Hostaway expense ID, and amount (already sign-adjusted).
   3. Any skipped expenses with reasons.
+- Refresh the Zoho access token proactively (or whenever the API returns HTTP 401) by running `./ops/scripts/refresh_zoho_token.sh`. This script reads `.env`, calls the Zoho OAuth refresh endpoint, and rewrites `ZOHO_ACCESS_TOKEN`. Ensure `ZOHO_REFRESH_TOKEN`, `ZOHO_CLIENT_ID`, and `ZOHO_CLIENT_SECRET` are present in `.env` before running it.
 
 ## Sample API requests
 
@@ -64,8 +67,8 @@ Use these templates as references; substitute environment variables and paginati
 ### Zoho Books – fetch unbilled expenses
 ```bash
 curl --request GET \
-  "https://books.zoho.com/api/v3/expenses?organization_id=${ZOHO_BOOKS_ORG_ID}&status=unbilled&per_page=200&page=1" \
-  --header "Authorization: Zoho-oauthtoken ${ZOHO_BOOKS_ACCESS_TOKEN}" \
+  "https://www.zohoapis.com/books/v3/expenses?organization_id=${ZOHO_ORGANIZATION_ID}&status=unbilled&per_page=200&page=1" \
+  --header "Authorization: Zoho-oauthtoken ${ZOHO_ACCESS_TOKEN}" \
   --header "Accept: application/json"
 ```
 
